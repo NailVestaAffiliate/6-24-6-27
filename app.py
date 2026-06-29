@@ -2,14 +2,15 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 
-st.set_page_config(page_title="NailVesta Weekly Dashboard", layout="wide")
+st.set_page_config(page_title="NailVesta Weekly GMV Dashboard", layout="wide")
 
 SCENARIO_ORDER = ["S", "AK", "AS", "C", "BK1", "BK2", "BK3", "BK4", "BS1", "BS2", "Haul"]
 
-st.title("NailVesta Weekly Dashboard")
-st.caption("GMV × 廣達 / 深達內容分類分析")
+st.title("NailVesta Weekly GMV Dashboard")
+st.caption("GMV × Creator Content × 廣達 / 深達內容結構摘要")
 
-st.sidebar.title("上傳資料")
+st.sidebar.title("資料設定")
+
 affiliate_file = st.sidebar.file_uploader("上傳廣達 Excel", type=["xlsx"])
 deep_file = st.sidebar.file_uploader("上傳深達 Excel", type=["xlsx"])
 
@@ -20,10 +21,6 @@ START_DATE = pd.to_datetime(start_date)
 END_DATE = pd.to_datetime(end_date)
 END_DATE_INCLUSIVE = END_DATE + pd.Timedelta(days=1)
 
-page = st.sidebar.radio(
-    "選擇頁面",
-    ["📈 GMV Analysis", "📹 Content Analysis", "📊 Combined Analysis", "📋 Raw Data"]
-)
 
 def read_excel_auto(uploaded_file, preferred_sheet=None):
     sheets = pd.read_excel(uploaded_file, sheet_name=None)
@@ -31,11 +28,13 @@ def read_excel_auto(uploaded_file, preferred_sheet=None):
         return sheets[preferred_sheet]
     return list(sheets.values())[0]
 
+
 def find_col(df, possible_cols):
     for col in possible_cols:
         if col in df.columns:
             return col
     return None
+
 
 def clean_scenario(value):
     if pd.isna(value):
@@ -76,48 +75,51 @@ def clean_scenario(value):
 
     return None
 
-def count_total_content(df, date_col):
+
+def filter_by_date(df, date_col):
     data = df.copy()
     data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
-    return len(data[(data[date_col] >= START_DATE) & (data[date_col] < END_DATE_INCLUSIVE)])
+    return data[
+        (data[date_col] >= START_DATE) &
+        (data[date_col] < END_DATE_INCLUSIVE)
+    ].copy()
 
-def prepare_content_data(df, group_name, date_col, feedback_col, handle_col=None, link_col=None):
-    data = df.copy()
-    data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
-    data = data[(data[date_col] >= START_DATE) & (data[date_col] < END_DATE_INCLUSIVE)].copy()
 
-    data["Group"] = group_name
-    data["Date"] = data[date_col].dt.date
-    data["Raw Feedback"] = data[feedback_col]
+def summarize_content(df, group_name, date_col, feedback_col):
+    data = filter_by_date(df, date_col)
+    total_count = len(data)
+
     data["Scenario"] = data[feedback_col].apply(clean_scenario)
-    data["Handle"] = data[handle_col] if handle_col and handle_col in data.columns else None
-    data["Link"] = data[link_col] if link_col and link_col in data.columns else None
-
     classified = data[data["Scenario"].notna()].copy()
-    return classified[["Group", "Date", "Handle", "Raw Feedback", "Scenario", "Link"]]
 
-def make_count_table(content_df):
-    base = pd.DataFrame({"Scenario": SCENARIO_ORDER})
-
-    pivot = (
-        content_df.groupby(["Scenario", "Group"])
+    summary = (
+        classified.groupby("Scenario")
         .size()
-        .reset_index(name="Count")
-        .pivot(index="Scenario", columns="Group", values="Count")
-        .fillna(0)
-        .astype(int)
-        .reset_index()
+        .reset_index(name=group_name)
     )
 
-    table = base.merge(pivot, on="Scenario", how="left").fillna(0)
+    return total_count, summary
+
+
+def make_summary_table(affiliate_summary, deep_summary):
+    base = pd.DataFrame({"Scenario": SCENARIO_ORDER})
+
+    table = base.merge(affiliate_summary, on="Scenario", how="left")
+    table = table.merge(deep_summary, on="Scenario", how="left")
 
     for col in ["廣達", "深達"]:
         if col not in table.columns:
             table[col] = 0
-        table[col] = table[col].astype(int)
+        table[col] = table[col].fillna(0).astype(int)
 
     table["Total"] = table["廣達"] + table["深達"]
+
     return table[["Scenario", "廣達", "深達", "Total"]]
+
+
+# =========================
+# 固定 GMV 數據
+# =========================
 
 gmv_df = pd.DataFrame({
     "Date": pd.to_datetime(["2026-06-24", "2026-06-25", "2026-06-26", "2026-06-27"]),
@@ -131,10 +133,15 @@ gmv_df = pd.DataFrame({
     "Items Sold": [319, 398, 395, 256],
 })
 
-content_df = pd.DataFrame()
-count_table = pd.DataFrame()
-affiliate_total_content = 0
-deep_total_content = 0
+
+# =========================
+# 讀取內容資料
+# =========================
+
+content_ready = False
+summary_table = pd.DataFrame()
+affiliate_total = 0
+deep_total = 0
 
 if affiliate_file and deep_file:
     affiliate_raw = read_excel_auto(affiliate_file, preferred_sheet="Affiliate List")
@@ -142,15 +149,12 @@ if affiliate_file and deep_file:
 
     affiliate_date_col = find_col(affiliate_raw, ["视频发布日期", "發布日期", "Video Publish Date"])
     affiliate_feedback_col = find_col(affiliate_raw, ["内容反馈", "內容反饋"])
-    affiliate_handle_col = find_col(affiliate_raw, ["Handle🧑", "handle", "Handle"])
-    affiliate_link_col = find_col(affiliate_raw, ["带货视频Link", "视频链接", "Video Link"])
 
     deep_date_col = find_col(deep_raw, ["视频发布日期", "發布日期", "Video Publish Date"])
     deep_feedback_col = find_col(deep_raw, ["视频反馈", "視頻反饋"])
-    deep_handle_col = find_col(deep_raw, ["handle", "Handle", "Handle🧑"])
-    deep_link_col = find_col(deep_raw, ["视频链接", "带货视频Link", "Video Link"])
 
     missing = []
+
     if not affiliate_date_col:
         missing.append("廣達：找不到日期欄位")
     if not affiliate_feedback_col:
@@ -166,222 +170,193 @@ if affiliate_file and deep_file:
         st.write("深達欄位：", list(deep_raw.columns))
         st.stop()
 
-    affiliate_total_content = count_total_content(affiliate_raw, affiliate_date_col)
-    deep_total_content = count_total_content(deep_raw, deep_date_col)
-
-    affiliate_content = prepare_content_data(
+    affiliate_total, affiliate_summary = summarize_content(
         affiliate_raw,
         "廣達",
         affiliate_date_col,
-        affiliate_feedback_col,
-        affiliate_handle_col,
-        affiliate_link_col
+        affiliate_feedback_col
     )
 
-    deep_content = prepare_content_data(
+    deep_total, deep_summary = summarize_content(
         deep_raw,
         "深達",
         deep_date_col,
-        deep_feedback_col,
-        deep_handle_col,
-        deep_link_col
+        deep_feedback_col
     )
 
-    content_df = pd.concat([affiliate_content, deep_content], ignore_index=True)
-    count_table = make_count_table(content_df)
+    summary_table = make_summary_table(affiliate_summary, deep_summary)
+    content_ready = True
 
-if page == "📈 GMV Analysis":
-    st.header("📈 GMV Analysis")
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("最高 Shop GMV", f"${gmv_df['Shop GMV'].max():,.2f}")
-    col2.metric("最高 Creator GMV", f"${gmv_df['Creator GMV'].max():,.2f}")
-    col3.metric("最高 Creator 占比", f"{gmv_df['Creator %'].max():.1f}%")
-    col4.metric("最低 Seller 占比", f"{gmv_df['Seller %'].min():.1f}%")
+# =========================
+# GMV Dashboard
+# =========================
 
-    st.dataframe(gmv_df, use_container_width=True)
+st.header("1. GMV Overview")
 
-    gmv_melt = gmv_df.melt(
-        id_vars="Date",
-        value_vars=["Shop GMV", "Creator GMV", "Seller GMV"],
-        var_name="Metric",
-        value_name="GMV"
-    )
+col1, col2, col3, col4 = st.columns(4)
 
-    chart = alt.Chart(gmv_melt).mark_line(point=True).encode(
-        x="Date:T",
-        y="GMV:Q",
-        color="Metric:N",
-        tooltip=["Date:T", "Metric:N", "GMV:Q"]
-    ).properties(height=400)
+col1.metric("最高 Shop GMV", f"${gmv_df['Shop GMV'].max():,.2f}")
+col2.metric("最高 Creator GMV", f"${gmv_df['Creator GMV'].max():,.2f}")
+col3.metric("最高 Creator 占比", f"{gmv_df['Creator %'].max():.1f}%")
+col4.metric("最低 Seller 占比", f"{gmv_df['Seller %'].min():.1f}%")
 
-    st.altair_chart(chart, use_container_width=True)
+st.dataframe(gmv_df, use_container_width=True)
 
-    share_df = gmv_df.melt(
-        id_vars="Date",
-        value_vars=["Creator %", "Seller %", "Shop Tab %"],
-        var_name="Channel",
-        value_name="Contribution %"
-    )
+gmv_melt = gmv_df.melt(
+    id_vars="Date",
+    value_vars=["Shop GMV", "Creator GMV", "Seller GMV"],
+    var_name="Metric",
+    value_name="GMV"
+)
 
-    share_chart = alt.Chart(share_df).mark_line(point=True).encode(
-        x="Date:T",
-        y="Contribution %:Q",
-        color="Channel:N",
-        tooltip=["Date:T", "Channel:N", "Contribution %:Q"]
-    ).properties(height=400)
+gmv_chart = alt.Chart(gmv_melt).mark_line(point=True).encode(
+    x="Date:T",
+    y="GMV:Q",
+    color="Metric:N",
+    tooltip=["Date:T", "Metric:N", "GMV:Q"]
+).properties(height=380)
 
-    st.altair_chart(share_chart, use_container_width=True)
+st.altair_chart(gmv_chart, use_container_width=True)
 
-elif page == "📹 Content Analysis":
-    st.header("📹 Content Analysis")
+share_df = gmv_df.melt(
+    id_vars="Date",
+    value_vars=["Creator %", "Seller %", "Shop Tab %"],
+    var_name="Channel",
+    value_name="Contribution %"
+)
 
-    if content_df.empty:
-        st.warning("請先在左側上傳廣達與深達兩個 Excel。")
-        st.stop()
+share_chart = alt.Chart(share_df).mark_line(point=True).encode(
+    x="Date:T",
+    y="Contribution %:Q",
+    color="Channel:N",
+    tooltip=["Date:T", "Channel:N", "Contribution %:Q"]
+).properties(height=380)
 
-    classified_total = len(content_df)
-    total_content = affiliate_total_content + deep_total_content
+st.altair_chart(share_chart, use_container_width=True)
 
-    affiliate_classified = int(count_table["廣達"].sum())
-    deep_classified = int(count_table["深達"].sum())
 
-    affiliate_s = int(count_table.loc[count_table["Scenario"] == "S", "廣達"].sum())
-    deep_s = int(count_table.loc[count_table["Scenario"] == "S", "深達"].sum())
-    total_s = affiliate_s + deep_s
+# =========================
+# Content Summary
+# =========================
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("廣達總數", affiliate_total_content)
-    col2.metric("深達總數", deep_total_content)
-    col3.metric("總內容數", total_content)
-    col4.metric("已分類內容數", classified_total)
+st.header("2. 廣達 / 深達內容結構摘要")
 
-    col5, col6, col7 = st.columns(3)
-    col5.metric("廣達已分類", affiliate_classified)
-    col6.metric("深達已分類", deep_classified)
-    col7.metric("S 內容合計", total_s)
+if not content_ready:
+    st.warning("請先在左側上傳廣達與深達兩個 Excel。")
+else:
+    total_content = affiliate_total + deep_total
 
-    st.subheader("Scenario 數量統計（廣達 / 深達分開）")
-    st.dataframe(count_table, use_container_width=True)
+    s_total = int(summary_table.loc[summary_table["Scenario"] == "S", "Total"].sum())
+    ak_total = int(summary_table.loc[summary_table["Scenario"] == "AK", "Total"].sum())
+    as_total = int(summary_table.loc[summary_table["Scenario"] == "AS", "Total"].sum())
+    c_total = int(summary_table.loc[summary_table["Scenario"] == "C", "Total"].sum())
 
-    st.info(f"廣達 S 內容：{affiliate_s} 條｜深達 S 內容：{deep_s} 條｜合計 S：{total_s} 條")
+    strong_total = s_total + ak_total + as_total
+    classified_total = int(summary_table["Total"].sum())
 
-    group_df = count_table.melt(
+    strong_rate_total = strong_total / total_content * 100 if total_content else 0
+    strong_rate_classified = strong_total / classified_total * 100 if classified_total else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("廣達內容數", affiliate_total)
+    c2.metric("深達內容數", deep_total)
+    c3.metric("總內容數", total_content)
+    c4.metric("已分類內容數", classified_total)
+
+    c5, c6, c7, c8 = st.columns(4)
+
+    c5.metric("S 內容", s_total)
+    c6.metric("AK 內容", ak_total)
+    c7.metric("AS 內容", as_total)
+    c8.metric("C 內容", c_total)
+
+    st.subheader("Scenario Summary")
+    st.dataframe(summary_table, use_container_width=True)
+
+    chart_data = summary_table.melt(
         id_vars="Scenario",
         value_vars=["廣達", "深達"],
         var_name="Group",
         value_name="Count"
     )
 
-    st.subheader("廣達 vs 深達 Scenario 對比")
-
-    group_chart = alt.Chart(group_df).mark_bar().encode(
+    scenario_chart = alt.Chart(chart_data).mark_bar().encode(
         x=alt.X("Scenario:N", sort=SCENARIO_ORDER),
         y="Count:Q",
         color="Group:N",
         xOffset="Group:N",
         tooltip=["Scenario:N", "Group:N", "Count:Q"]
-    ).properties(height=420)
-
-    st.altair_chart(group_chart, use_container_width=True)
-
-    st.subheader("Scenario Total Distribution")
-
-    total_chart = alt.Chart(count_table).mark_bar().encode(
-        x=alt.X("Scenario:N", sort=SCENARIO_ORDER),
-        y="Total:Q",
-        tooltip=["Scenario:N", "Total:Q"]
     ).properties(height=400)
 
-    st.altair_chart(total_chart, use_container_width=True)
+    st.altair_chart(scenario_chart, use_container_width=True)
 
-    st.subheader("每日內容數（已分類）")
 
-    daily_df = content_df.groupby(["Date", "Group"]).size().reset_index(name="Content Count")
+    # =========================
+    # AI Weekly Report
+    # =========================
 
-    daily_chart = alt.Chart(daily_df).mark_line(point=True).encode(
-        x="Date:T",
-        y="Content Count:Q",
-        color="Group:N",
-        tooltip=["Date:T", "Group:N", "Content Count:Q"]
-    ).properties(height=400)
-
-    st.altair_chart(daily_chart, use_container_width=True)
-
-    st.subheader("內容分類明細")
-    st.dataframe(content_df, use_container_width=True)
-
-elif page == "📊 Combined Analysis":
-    st.header("📊 Combined Analysis")
-
-    if content_df.empty:
-        st.warning("請先在左側上傳廣達與深達兩個 Excel。")
-        st.stop()
-
-    total_content = affiliate_total_content + deep_total_content
-    classified_total = int(count_table["Total"].sum())
-
-    strong = int(count_table[count_table["Scenario"].isin(["S", "AK", "AS"])]["Total"].sum())
-    strong_rate_total = strong / total_content * 100 if total_content else 0
-    strong_rate_classified = strong / classified_total * 100 if classified_total else 0
-
-    affiliate_strong = int(count_table[count_table["Scenario"].isin(["S", "AK", "AS"])]["廣達"].sum())
-    deep_strong = int(count_table[count_table["Scenario"].isin(["S", "AK", "AS"])]["深達"].sum())
-
-    affiliate_strong_rate = affiliate_strong / affiliate_total_content * 100 if affiliate_total_content else 0
-    deep_strong_rate = deep_strong / deep_total_content * 100 if deep_total_content else 0
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("全部強內容 / 總內容", f"{strong_rate_total:.1f}%")
-    col2.metric("廣達強內容占比", f"{affiliate_strong_rate:.1f}%")
-    col3.metric("深達強內容占比", f"{deep_strong_rate:.1f}%")
+    st.header("3. AI Weekly Report")
 
     st.markdown(f"""
-### 綜合結論
+### 核心結論
 
 6/19–6/27 共統計 **{total_content}** 條內容。
 
 其中：
 
-- 廣達：**{affiliate_total_content}** 條
-- 深達：**{deep_total_content}** 條
-- 已完成分類內容：**{classified_total}** 條
-- S / AK / AS 強內容：**{strong}** 條
+- 廣達：**{affiliate_total}** 條
+- 深達：**{deep_total}** 條
+- 已完成 Scenario 分類：**{classified_total}** 條
+- S 內容：**{s_total}** 條
+- AK 內容：**{ak_total}** 條
+- AS 內容：**{as_total}** 條
+- C 內容：**{c_total}** 條
+- S / AK / AS 強內容合計：**{strong_total}** 條
 - 強內容占總內容比例：**{strong_rate_total:.1f}%**
 - 強內容占已分類內容比例：**{strong_rate_classified:.1f}%**
 
-GMV 端來看，6/25 到 6/26：
+### GMV 端觀察
 
-- Shop GMV 幾乎持平
-- Creator Content 占比從 **26.3%** 提升到 **41.2%**
-- Seller Content 占比從 **48.6%** 下降到 **36.6%**
+6/25 到 6/26，Shop GMV 幾乎持平：
 
-所以目前判斷不是店舖突然放大，而是 TikTok 將 Buyer Flow 從 Seller Content / Shop Tab 重新分配到 Creator Content。
+- 6/25 Shop GMV：**${gmv_df.loc[1, "Shop GMV"]:,.2f}**
+- 6/26 Shop GMV：**${gmv_df.loc[2, "Shop GMV"]:,.2f}**
+
+但成交來源發生明顯轉移：
+
+- Creator Content 占比從 **{gmv_df.loc[1, "Creator %"]:.1f}%** 提升到 **{gmv_df.loc[2, "Creator %"]:.1f}%**
+- Seller Content 占比從 **{gmv_df.loc[1, "Seller %"]:.1f}%** 下降到 **{gmv_df.loc[2, "Seller %"]:.1f}%**
+- Shop Tab 占比從 **{gmv_df.loc[1, "Shop Tab %"]:.1f}%** 下降到 **{gmv_df.loc[2, "Shop Tab %"]:.1f}%**
+
+### 判斷
+
+這代表店舖 GMV 不是單純放大，而是 TikTok 正在重新分配 Buyer Flow。
+
+6/24–6/25 流量更偏向 Seller Content / Shop Tab，  
+6/26–6/27 流量更偏向 Creator Content。
+
+因此，直播組與 Affiliate 不一定會每天同步成長。  
+當平台把高購買意圖流量分配給 Seller 側時，Creator 占比可能下降；  
+當平台重新判定 Creator Content 效率更高時，Creator 占比就會快速提升。
+
+### 建議
+
+接下來建議持續追蹤：
+
+1. Creator Content 占比是否能穩定維持在 **40% 左右**
+2. Seller Content 是否持續下降
+3. Shop Tab 是否被 Creator Content 分流
+4. S / AK / AS 強內容占比是否與 Creator GMV 提升同步
+
+如果 Creator Content 占比連續一週維持高位，代表 TikTok 可能開始更信任達人內容的轉化能力，後續應優先複製 S / AK / AS 類型內容。
 """)
 
-    st.subheader("Scenario 統計")
-    st.dataframe(count_table, use_container_width=True)
-
-elif page == "📋 Raw Data":
-    st.header("📋 Raw Data")
-
-    if content_df.empty:
-        st.warning("請先在左側上傳廣達與深達兩個 Excel。")
-        st.stop()
-
-    st.subheader("整理後內容資料")
-    st.dataframe(content_df, use_container_width=True)
-
-    st.subheader("Scenario 統計表")
-    st.dataframe(count_table, use_container_width=True)
-
-    st.subheader("GMV 資料")
-    st.dataframe(gmv_df, use_container_width=True)
-
-    csv = count_table.to_csv(index=False).encode("utf-8-sig")
+    csv = summary_table.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
-        "下載 Scenario 統計 CSV",
+        "下載 Scenario Summary CSV",
         data=csv,
-        file_name="scenario_count_20260619_20260627.csv",
+        file_name="scenario_summary_20260619_20260627.csv",
         mime="text/csv"
     )
