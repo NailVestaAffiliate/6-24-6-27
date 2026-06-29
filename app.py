@@ -7,10 +7,9 @@ st.set_page_config(page_title="NailVesta Weekly GMV Dashboard", layout="wide")
 SCENARIO_ORDER = ["S", "AK", "AS", "C", "BK1", "BK2", "BK3", "BK4", "BS1", "BS2", "Haul"]
 
 st.title("NailVesta Weekly GMV Dashboard")
-st.caption("GMV × Creator Content × 廣達 / 深達內容結構摘要")
+st.caption("GMV × Creator Content × AI Weekly Report")
 
 st.sidebar.title("資料設定")
-
 affiliate_file = st.sidebar.file_uploader("上傳廣達 Excel", type=["xlsx"])
 deep_file = st.sidebar.file_uploader("上傳深達 Excel", type=["xlsx"])
 
@@ -85,41 +84,18 @@ def filter_by_date(df, date_col):
     ].copy()
 
 
-def summarize_content(df, group_name, date_col, feedback_col):
+def summarize_content(df, date_col, feedback_col):
     data = filter_by_date(df, date_col)
     total_count = len(data)
 
     data["Scenario"] = data[feedback_col].apply(clean_scenario)
     classified = data[data["Scenario"].notna()].copy()
 
-    summary = (
-        classified.groupby("Scenario")
-        .size()
-        .reset_index(name=group_name)
-    )
+    counts = classified["Scenario"].value_counts().to_dict()
+    result = {s: int(counts.get(s, 0)) for s in SCENARIO_ORDER}
 
-    return total_count, summary
+    return total_count, result
 
-
-def make_summary_table(affiliate_summary, deep_summary):
-    base = pd.DataFrame({"Scenario": SCENARIO_ORDER})
-
-    table = base.merge(affiliate_summary, on="Scenario", how="left")
-    table = table.merge(deep_summary, on="Scenario", how="left")
-
-    for col in ["廣達", "深達"]:
-        if col not in table.columns:
-            table[col] = 0
-        table[col] = table[col].fillna(0).astype(int)
-
-    table["Total"] = table["廣達"] + table["深達"]
-
-    return table[["Scenario", "廣達", "深達", "Total"]]
-
-
-# =========================
-# 固定 GMV 數據
-# =========================
 
 gmv_df = pd.DataFrame({
     "Date": pd.to_datetime(["2026-06-24", "2026-06-25", "2026-06-26", "2026-06-27"]),
@@ -134,14 +110,11 @@ gmv_df = pd.DataFrame({
 })
 
 
-# =========================
-# 讀取內容資料
-# =========================
-
-content_ready = False
-summary_table = pd.DataFrame()
 affiliate_total = 0
 deep_total = 0
+affiliate_counts = {s: 0 for s in SCENARIO_ORDER}
+deep_counts = {s: 0 for s in SCENARIO_ORDER}
+data_ready = False
 
 if affiliate_file and deep_file:
     affiliate_raw = read_excel_auto(affiliate_file, preferred_sheet="Affiliate List")
@@ -154,7 +127,6 @@ if affiliate_file and deep_file:
     deep_feedback_col = find_col(deep_raw, ["视频反馈", "視頻反饋"])
 
     missing = []
-
     if not affiliate_date_col:
         missing.append("廣達：找不到日期欄位")
     if not affiliate_feedback_col:
@@ -170,32 +142,24 @@ if affiliate_file and deep_file:
         st.write("深達欄位：", list(deep_raw.columns))
         st.stop()
 
-    affiliate_total, affiliate_summary = summarize_content(
+    affiliate_total, affiliate_counts = summarize_content(
         affiliate_raw,
-        "廣達",
         affiliate_date_col,
         affiliate_feedback_col
     )
 
-    deep_total, deep_summary = summarize_content(
+    deep_total, deep_counts = summarize_content(
         deep_raw,
-        "深達",
         deep_date_col,
         deep_feedback_col
     )
 
-    summary_table = make_summary_table(affiliate_summary, deep_summary)
-    content_ready = True
+    data_ready = True
 
-
-# =========================
-# GMV Dashboard
-# =========================
 
 st.header("1. GMV Overview")
 
 col1, col2, col3, col4 = st.columns(4)
-
 col1.metric("最高 Shop GMV", f"${gmv_df['Shop GMV'].max():,.2f}")
 col2.metric("最高 Creator GMV", f"${gmv_df['Creator GMV'].max():,.2f}")
 col3.metric("最高 Creator 占比", f"{gmv_df['Creator %'].max():.1f}%")
@@ -236,68 +200,23 @@ share_chart = alt.Chart(share_df).mark_line(point=True).encode(
 st.altair_chart(share_chart, use_container_width=True)
 
 
-# =========================
-# Content Summary
-# =========================
+st.header("2. AI Weekly Report")
 
-st.header("2. 廣達 / 深達內容結構摘要")
-
-if not content_ready:
+if not data_ready:
     st.warning("請先在左側上傳廣達與深達兩個 Excel。")
 else:
     total_content = affiliate_total + deep_total
 
-    s_total = int(summary_table.loc[summary_table["Scenario"] == "S", "Total"].sum())
-    ak_total = int(summary_table.loc[summary_table["Scenario"] == "AK", "Total"].sum())
-    as_total = int(summary_table.loc[summary_table["Scenario"] == "AS", "Total"].sum())
-    c_total = int(summary_table.loc[summary_table["Scenario"] == "C", "Total"].sum())
+    total_counts = {
+        s: affiliate_counts.get(s, 0) + deep_counts.get(s, 0)
+        for s in SCENARIO_ORDER
+    }
 
-    strong_total = s_total + ak_total + as_total
-    classified_total = int(summary_table["Total"].sum())
+    strong_total = total_counts["S"] + total_counts["AK"] + total_counts["AS"]
+    classified_total = sum(total_counts.values())
 
     strong_rate_total = strong_total / total_content * 100 if total_content else 0
     strong_rate_classified = strong_total / classified_total * 100 if classified_total else 0
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric("廣達內容數", affiliate_total)
-    c2.metric("深達內容數", deep_total)
-    c3.metric("總內容數", total_content)
-    c4.metric("已分類內容數", classified_total)
-
-    c5, c6, c7, c8 = st.columns(4)
-
-    c5.metric("S 內容", s_total)
-    c6.metric("AK 內容", ak_total)
-    c7.metric("AS 內容", as_total)
-    c8.metric("C 內容", c_total)
-
-    st.subheader("Scenario Summary")
-    st.dataframe(summary_table, use_container_width=True)
-
-    chart_data = summary_table.melt(
-        id_vars="Scenario",
-        value_vars=["廣達", "深達"],
-        var_name="Group",
-        value_name="Count"
-    )
-
-    scenario_chart = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("Scenario:N", sort=SCENARIO_ORDER),
-        y="Count:Q",
-        color="Group:N",
-        xOffset="Group:N",
-        tooltip=["Scenario:N", "Group:N", "Count:Q"]
-    ).properties(height=400)
-
-    st.altair_chart(scenario_chart, use_container_width=True)
-
-
-    # =========================
-    # AI Weekly Report
-    # =========================
-
-    st.header("3. AI Weekly Report")
 
     st.markdown(f"""
 ### 核心結論
@@ -309,13 +228,24 @@ else:
 - 廣達：**{affiliate_total}** 條
 - 深達：**{deep_total}** 條
 - 已完成 Scenario 分類：**{classified_total}** 條
-- S 內容：**{s_total}** 條
-- AK 內容：**{ak_total}** 條
-- AS 內容：**{as_total}** 條
-- C 內容：**{c_total}** 條
-- S / AK / AS 強內容合計：**{strong_total}** 條
-- 強內容占總內容比例：**{strong_rate_total:.1f}%**
-- 強內容占已分類內容比例：**{strong_rate_classified:.1f}%**
+
+### Scenario 結構
+
+- S：**{total_counts["S"]}** 條（廣達 {affiliate_counts["S"]}｜深達 {deep_counts["S"]}）
+- AK：**{total_counts["AK"]}** 條（廣達 {affiliate_counts["AK"]}｜深達 {deep_counts["AK"]}）
+- AS：**{total_counts["AS"]}** 條（廣達 {affiliate_counts["AS"]}｜深達 {deep_counts["AS"]}）
+- C：**{total_counts["C"]}** 條（廣達 {affiliate_counts["C"]}｜深達 {deep_counts["C"]}）
+- BK1：**{total_counts["BK1"]}** 條
+- BK2：**{total_counts["BK2"]}** 條
+- BK3：**{total_counts["BK3"]}** 條
+- BK4：**{total_counts["BK4"]}** 條
+- BS1：**{total_counts["BS1"]}** 條
+- BS2：**{total_counts["BS2"]}** 條
+- Haul：**{total_counts["Haul"]}** 條
+
+S / AK / AS 強內容合計：**{strong_total}** 條。  
+強內容占總內容比例：**{strong_rate_total:.1f}%**。  
+強內容占已分類內容比例：**{strong_rate_classified:.1f}%**。
 
 ### GMV 端觀察
 
@@ -334,12 +264,10 @@ else:
 
 這代表店舖 GMV 不是單純放大，而是 TikTok 正在重新分配 Buyer Flow。
 
-6/24–6/25 流量更偏向 Seller Content / Shop Tab，  
+6/24–6/25 流量更偏向 Seller Content / Shop Tab。  
 6/26–6/27 流量更偏向 Creator Content。
 
-因此，直播組與 Affiliate 不一定會每天同步成長。  
-當平台把高購買意圖流量分配給 Seller 側時，Creator 占比可能下降；  
-當平台重新判定 Creator Content 效率更高時，Creator 占比就會快速提升。
+因此，直播組與 Affiliate 不一定會每天同步成長。當平台把高購買意圖流量分配給 Seller 側時，Creator 占比可能下降；當平台重新判定 Creator Content 效率更高時，Creator 占比就會快速提升。
 
 ### 建議
 
@@ -352,11 +280,3 @@ else:
 
 如果 Creator Content 占比連續一週維持高位，代表 TikTok 可能開始更信任達人內容的轉化能力，後續應優先複製 S / AK / AS 類型內容。
 """)
-
-    csv = summary_table.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "下載 Scenario Summary CSV",
-        data=csv,
-        file_name="scenario_summary_20260619_20260627.csv",
-        mime="text/csv"
-    )
