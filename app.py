@@ -7,7 +7,7 @@ st.set_page_config(page_title="NailVesta Weekly Dashboard", layout="wide")
 SCENARIO_ORDER = ["S", "AK", "AS", "C", "BK1", "BK2", "BK3", "BK4", "BS1", "BS2", "Haul"]
 
 st.title("NailVesta Weekly Dashboard")
-st.caption("GMV × 廣達 / 深達影片分類分析")
+st.caption("GMV × 廣達 / 深達內容分類分析")
 
 st.sidebar.title("上傳資料")
 affiliate_file = st.sidebar.file_uploader("上傳廣達 Excel", type=["xlsx"])
@@ -22,7 +22,7 @@ END_DATE_INCLUSIVE = END_DATE + pd.Timedelta(days=1)
 
 page = st.sidebar.radio(
     "選擇頁面",
-    ["📈 GMV Analysis", "📹 Video Analysis", "📊 Combined Analysis", "📋 Raw Data"]
+    ["📈 GMV Analysis", "📹 Content Analysis", "📊 Combined Analysis", "📋 Raw Data"]
 )
 
 def read_excel_auto(uploaded_file, preferred_sheet=None):
@@ -76,12 +76,12 @@ def clean_scenario(value):
 
     return None
 
-def count_total_videos(df, date_col):
+def count_total_content(df, date_col):
     data = df.copy()
     data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
     return len(data[(data[date_col] >= START_DATE) & (data[date_col] < END_DATE_INCLUSIVE)])
 
-def prepare_video_data(df, group_name, date_col, feedback_col, handle_col=None, link_col=None):
+def prepare_content_data(df, group_name, date_col, feedback_col, handle_col=None, link_col=None):
     data = df.copy()
     data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
     data = data[(data[date_col] >= START_DATE) & (data[date_col] < END_DATE_INCLUSIVE)].copy()
@@ -91,16 +91,16 @@ def prepare_video_data(df, group_name, date_col, feedback_col, handle_col=None, 
     data["Raw Feedback"] = data[feedback_col]
     data["Scenario"] = data[feedback_col].apply(clean_scenario)
     data["Handle"] = data[handle_col] if handle_col and handle_col in data.columns else None
-    data["Video Link"] = data[link_col] if link_col and link_col in data.columns else None
+    data["Link"] = data[link_col] if link_col and link_col in data.columns else None
 
     classified = data[data["Scenario"].notna()].copy()
-    return classified[["Group", "Date", "Handle", "Raw Feedback", "Scenario", "Video Link"]]
+    return classified[["Group", "Date", "Handle", "Raw Feedback", "Scenario", "Link"]]
 
-def make_count_table(video_df):
+def make_count_table(content_df):
     base = pd.DataFrame({"Scenario": SCENARIO_ORDER})
 
     pivot = (
-        video_df.groupby(["Scenario", "Group"])
+        content_df.groupby(["Scenario", "Group"])
         .size()
         .reset_index(name="Count")
         .pivot(index="Scenario", columns="Group", values="Count")
@@ -131,11 +131,10 @@ gmv_df = pd.DataFrame({
     "Items Sold": [319, 398, 395, 256],
 })
 
-video_df = pd.DataFrame()
+content_df = pd.DataFrame()
 count_table = pd.DataFrame()
-affiliate_total_videos = 0
-deep_total_videos = 0
-unclassified_df = pd.DataFrame()
+affiliate_total_content = 0
+deep_total_content = 0
 
 if affiliate_file and deep_file:
     affiliate_raw = read_excel_auto(affiliate_file, preferred_sheet="Affiliate List")
@@ -153,13 +152,13 @@ if affiliate_file and deep_file:
 
     missing = []
     if not affiliate_date_col:
-        missing.append("廣達：找不到 视频发布日期")
+        missing.append("廣達：找不到日期欄位")
     if not affiliate_feedback_col:
-        missing.append("廣達：找不到 内容反馈")
+        missing.append("廣達：找不到內容反饋欄位")
     if not deep_date_col:
-        missing.append("深達：找不到 视频发布日期")
+        missing.append("深達：找不到日期欄位")
     if not deep_feedback_col:
-        missing.append("深達：找不到 视频反馈")
+        missing.append("深達：找不到視頻反饋欄位")
 
     if missing:
         st.error("欄位缺失：\n" + "\n".join(missing))
@@ -167,10 +166,10 @@ if affiliate_file and deep_file:
         st.write("深達欄位：", list(deep_raw.columns))
         st.stop()
 
-    affiliate_total_videos = count_total_videos(affiliate_raw, affiliate_date_col)
-    deep_total_videos = count_total_videos(deep_raw, deep_date_col)
+    affiliate_total_content = count_total_content(affiliate_raw, affiliate_date_col)
+    deep_total_content = count_total_content(deep_raw, deep_date_col)
 
-    affiliate_video = prepare_video_data(
+    affiliate_content = prepare_content_data(
         affiliate_raw,
         "廣達",
         affiliate_date_col,
@@ -179,7 +178,7 @@ if affiliate_file and deep_file:
         affiliate_link_col
     )
 
-    deep_video = prepare_video_data(
+    deep_content = prepare_content_data(
         deep_raw,
         "深達",
         deep_date_col,
@@ -188,8 +187,8 @@ if affiliate_file and deep_file:
         deep_link_col
     )
 
-    video_df = pd.concat([affiliate_video, deep_video], ignore_index=True)
-    count_table = make_count_table(video_df)
+    content_df = pd.concat([affiliate_content, deep_content], ignore_index=True)
+    count_table = make_count_table(content_df)
 
 if page == "📈 GMV Analysis":
     st.header("📈 GMV Analysis")
@@ -234,15 +233,15 @@ if page == "📈 GMV Analysis":
 
     st.altair_chart(share_chart, use_container_width=True)
 
-elif page == "📹 Video Analysis":
-    st.header("📹 Video Analysis")
+elif page == "📹 Content Analysis":
+    st.header("📹 Content Analysis")
 
-    if video_df.empty:
+    if content_df.empty:
         st.warning("請先在左側上傳廣達與深達兩個 Excel。")
         st.stop()
 
-    classified_total = len(video_df)
-    total_videos = affiliate_total_videos + deep_total_videos
+    classified_total = len(content_df)
+    total_content = affiliate_total_content + deep_total_content
 
     affiliate_classified = int(count_table["廣達"].sum())
     deep_classified = int(count_table["深達"].sum())
@@ -252,20 +251,20 @@ elif page == "📹 Video Analysis":
     total_s = affiliate_s + deep_s
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("廣達總影片數", affiliate_total_videos)
-    col2.metric("深達總影片數", deep_total_videos)
-    col3.metric("總影片數", total_videos)
-    col4.metric("已分類影片數", classified_total)
+    col1.metric("廣達總數", affiliate_total_content)
+    col2.metric("深達總數", deep_total_content)
+    col3.metric("總內容數", total_content)
+    col4.metric("已分類內容數", classified_total)
 
     col5, col6, col7 = st.columns(3)
     col5.metric("廣達已分類", affiliate_classified)
     col6.metric("深達已分類", deep_classified)
-    col7.metric("S 影片合計", total_s)
+    col7.metric("S 內容合計", total_s)
 
     st.subheader("Scenario 數量統計（廣達 / 深達分開）")
     st.dataframe(count_table, use_container_width=True)
 
-    st.info(f"廣達 S 影片：{affiliate_s} 支｜深達 S 影片：{deep_s} 支｜合計 S：{total_s} 支")
+    st.info(f"廣達 S 內容：{affiliate_s} 條｜深達 S 內容：{deep_s} 條｜合計 S：{total_s} 條")
 
     group_df = count_table.melt(
         id_vars="Scenario",
@@ -296,63 +295,60 @@ elif page == "📹 Video Analysis":
 
     st.altair_chart(total_chart, use_container_width=True)
 
-    st.subheader("每日發布量（已分類影片）")
+    st.subheader("每日內容數（已分類）")
 
-    daily_df = video_df.groupby(["Date", "Group"]).size().reset_index(name="Videos")
+    daily_df = content_df.groupby(["Date", "Group"]).size().reset_index(name="Content Count")
 
     daily_chart = alt.Chart(daily_df).mark_line(point=True).encode(
         x="Date:T",
-        y="Videos:Q",
+        y="Content Count:Q",
         color="Group:N",
-        tooltip=["Date:T", "Group:N", "Videos:Q"]
+        tooltip=["Date:T", "Group:N", "Content Count:Q"]
     ).properties(height=400)
 
     st.altair_chart(daily_chart, use_container_width=True)
 
-    st.subheader("分類明細資料")
-    st.dataframe(video_df, use_container_width=True)
+    st.subheader("內容分類明細")
+    st.dataframe(content_df, use_container_width=True)
 
 elif page == "📊 Combined Analysis":
     st.header("📊 Combined Analysis")
 
-    if video_df.empty:
+    if content_df.empty:
         st.warning("請先在左側上傳廣達與深達兩個 Excel。")
         st.stop()
 
-    total_videos = affiliate_total_videos + deep_total_videos
+    total_content = affiliate_total_content + deep_total_content
     classified_total = int(count_table["Total"].sum())
 
     strong = int(count_table[count_table["Scenario"].isin(["S", "AK", "AS"])]["Total"].sum())
-    strong_rate_total = strong / total_videos * 100 if total_videos else 0
+    strong_rate_total = strong / total_content * 100 if total_content else 0
     strong_rate_classified = strong / classified_total * 100 if classified_total else 0
-
-    affiliate_total = affiliate_total_videos
-    deep_total = deep_total_videos
 
     affiliate_strong = int(count_table[count_table["Scenario"].isin(["S", "AK", "AS"])]["廣達"].sum())
     deep_strong = int(count_table[count_table["Scenario"].isin(["S", "AK", "AS"])]["深達"].sum())
 
-    affiliate_strong_rate = affiliate_strong / affiliate_total * 100 if affiliate_total else 0
-    deep_strong_rate = deep_strong / deep_total * 100 if deep_total else 0
+    affiliate_strong_rate = affiliate_strong / affiliate_total_content * 100 if affiliate_total_content else 0
+    deep_strong_rate = deep_strong / deep_total_content * 100 if deep_total_content else 0
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("全部強內容 / 總影片", f"{strong_rate_total:.1f}%")
+    col1.metric("全部強內容 / 總內容", f"{strong_rate_total:.1f}%")
     col2.metric("廣達強內容占比", f"{affiliate_strong_rate:.1f}%")
     col3.metric("深達強內容占比", f"{deep_strong_rate:.1f}%")
 
     st.markdown(f"""
 ### 綜合結論
 
-6/19–6/27 共發布 **{total_videos}** 支影片。
+6/19–6/27 共統計 **{total_content}** 條內容。
 
 其中：
 
-- 廣達總影片：**{affiliate_total_videos}** 支
-- 深達總影片：**{deep_total_videos}** 支
-- 已完成分類影片：**{classified_total}** 支
-- S / AK / AS 強內容：**{strong}** 支
-- 強內容占總影片比例：**{strong_rate_total:.1f}%**
-- 強內容占已分類影片比例：**{strong_rate_classified:.1f}%**
+- 廣達：**{affiliate_total_content}** 條
+- 深達：**{deep_total_content}** 條
+- 已完成分類內容：**{classified_total}** 條
+- S / AK / AS 強內容：**{strong}** 條
+- 強內容占總內容比例：**{strong_rate_total:.1f}%**
+- 強內容占已分類內容比例：**{strong_rate_classified:.1f}%**
 
 GMV 端來看，6/25 到 6/26：
 
@@ -369,12 +365,12 @@ GMV 端來看，6/25 到 6/26：
 elif page == "📋 Raw Data":
     st.header("📋 Raw Data")
 
-    if video_df.empty:
+    if content_df.empty:
         st.warning("請先在左側上傳廣達與深達兩個 Excel。")
         st.stop()
 
-    st.subheader("整理後影片資料")
-    st.dataframe(video_df, use_container_width=True)
+    st.subheader("整理後內容資料")
+    st.dataframe(content_df, use_container_width=True)
 
     st.subheader("Scenario 統計表")
     st.dataframe(count_table, use_container_width=True)
